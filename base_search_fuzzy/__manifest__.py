@@ -18,4 +18,5 @@
         'security/ir.model.access.csv',
     ],
     'installable': True,
+    "post_load": "post_load",
 }
