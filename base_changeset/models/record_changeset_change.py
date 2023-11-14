@@ -194,9 +194,11 @@ class RecordChangesetChange(models.Model):
         return "{}_value_{}".format(prefix, field_type)
 
     def get_origin_value(self):
+        """Display the old value or the origin value."""
         self.ensure_one()
-        field_name = self.get_field_for_type(self.field_id, "origin")
-        return self[field_name]
+        origin_field_name = self.get_field_for_type(self.field_id, "origin")
+        old_field_name = self.get_field_for_type(self.field_id, "old")
+        return self[old_field_name] or self[origin_field_name]
 
     def get_new_value(self):
         self.ensure_one()
@@ -205,7 +207,9 @@ class RecordChangesetChange(models.Model):
 
     def set_old_value(self):
         """Copy the value of the record to the 'old' field"""
-        for change in self:
+        for change in self.filtered(
+            lambda x: x.field_id.store and not x.field_id.readonly
+        ):
             # copy the existing record's value for the history
             old_value_for_write = self._value_for_changeset(
                 change.record_id, change.field_id.name
@@ -222,6 +226,7 @@ class RecordChangesetChange(models.Model):
         for change in self:
             if not change.user_can_validate_changeset:
                 raise UserError(_("You don't have the rights to apply the changes."))
+
         changes_ok = self.browse()
         key = attrgetter("changeset_id")
         for changeset, changes in groupby(
@@ -233,11 +238,12 @@ class RecordChangesetChange(models.Model):
                     continue
 
                 field = change.field_id
-                new_value = change.get_new_value()
-                value_for_write = change._convert_value_for_write(new_value)
-                values[field.name] = value_for_write
+                if field.store and not field.readonly:
+                    new_value = change.get_new_value()
+                    value_for_write = change._convert_value_for_write(new_value)
+                    values[field.name] = value_for_write
 
-                change.set_old_value()
+                    change.set_old_value()
 
                 changes_ok |= change
 
@@ -364,7 +370,7 @@ class RecordChangesetChange(models.Model):
             change["state"] = "cancel"
             pop_value = True  # change never applied
 
-        if create or change["state"] in ("cancel", "done"):
+        if create or change["state"] in ("cancel", "done") or rule.field_id.readonly:
             # Normally the 'old' value is set when we use the 'apply'
             # button, but since we short circuit the 'apply', we
             # directly set the 'old' value here
