@@ -194,8 +194,12 @@ class RecordChangesetChange(models.Model):
         return "{}_value_{}".format(prefix, field_type)
 
     def get_origin_value(self):
+        """We need to show the old data if it is a related or compute because
+        origin will be incorrect."""
         self.ensure_one()
-        field_name = self.get_field_for_type(self.field_id, "origin")
+        field = self.env[self.model]._fields[self.field_id.name]
+        prefix = "old" if field.related or field.compute else "origin"
+        field_name = self.get_field_for_type(self.field_id, prefix)
         return self[field_name]
 
     def get_new_value(self):
@@ -205,7 +209,9 @@ class RecordChangesetChange(models.Model):
 
     def set_old_value(self):
         """Copy the value of the record to the 'old' field"""
-        for change in self:
+        for change in self.filtered(
+            lambda x: x.field_id.store and not x.field_id.readonly
+        ):
             # copy the existing record's value for the history
             old_value_for_write = self._value_for_changeset(
                 change.record_id, change.field_id.name
@@ -233,11 +239,12 @@ class RecordChangesetChange(models.Model):
                     continue
 
                 field = change.field_id
-                new_value = change.get_new_value()
-                value_for_write = change._convert_value_for_write(new_value)
-                values[field.name] = value_for_write
+                if field.store and not field.readonly:
+                    new_value = change.get_new_value()
+                    value_for_write = change._convert_value_for_write(new_value)
+                    values[field.name] = value_for_write
 
-                change.set_old_value()
+                    change.set_old_value()
 
                 changes_ok |= change
 

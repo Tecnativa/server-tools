@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from odoo import fields
 from odoo.exceptions import UserError
 from odoo.tests.common import TransactionCase
+from odoo.tools import mute_logger
 
 from ..models.base import disable_changeset
 from .common import ChangesetTestCommon
@@ -29,6 +30,7 @@ class TestChangesetFlow(ChangesetTestCommon, TransactionCase):
       becomes 'done'
     """
 
+    @mute_logger("odoo.models.unlink")
     def _setup_rules(self):
         ChangesetFieldRule = self.env["changeset.field.rule"]
         ChangesetFieldRule.search([]).unlink()
@@ -74,6 +76,22 @@ class TestChangesetFlow(ChangesetTestCommon, TransactionCase):
         self.assertEqual(self.partner.name, "Y")
         self.assertEqual(self.partner.street, "street X")
         self.assertEqual(self.partner.street2, "street2 X")
+
+    def test_new_changeset_compute_field(self):
+        field_display_name = self.env.ref("base.field_res_partner__display_name")
+        self.env["changeset.field.rule"].create(
+            {"field_id": field_display_name.id, "action": "validate"}
+        )
+        self.partner.write({"name": "Y"})
+        self.partner._compute_changeset_ids()
+        self.assert_changeset(
+            self.partner,
+            self.env.user,
+            [
+                (self.field_name, "X", "Y", "done"),
+                (field_display_name, "X", "Y", "draft"),
+            ],
+        )
 
     def test_create_new_changeset(self):
         """Create a new partner with a changeset"""

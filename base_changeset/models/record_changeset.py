@@ -163,10 +163,11 @@ class RecordChangeset(models.Model):
                         or record._fields[field].null(record)
                     )
             changes.append(change)
+        changeset = False
         if changes:
             changeset_vals = self._prepare_changeset_vals(changes, record, source)
-            self.env["record.changeset"].create(changeset_vals)
-        return write_values
+            changeset = self.env["record.changeset"].create(changeset_vals)
+        return write_values, changeset, rules
 
     @api.model
     def _prepare_changeset_vals(self, changes, record, source):
@@ -182,3 +183,35 @@ class RecordChangeset(models.Model):
             "date": fields.Datetime.now(),
             "source": source,
         }
+
+    def add_post_changeset(self, values, rules, create=False):
+        """Adding extra related/compute fields that were not in vals() of the
+        write methods."""
+        change_model = self.env["record.changeset.change"]
+        for item in self:
+            record = self.env[item.model].browse(item.res_id)
+            changes = []
+            for field in list(values.keys()):
+                rule = rules.get(field)
+                if (
+                    not rule
+                    or not rule._evaluate_expression(record)
+                    or (create and not record[field])
+                ):
+                    continue
+                old_value = values[field] if not create else False
+                value = record[field]
+                if old_value != value:
+                    change, pop_value = change_model._prepare_changeset_change(
+                        record,
+                        rule,
+                        field,
+                        value,
+                    )
+                    old_field_name = change_model.get_field_for_type(
+                        rule.field_id, "old"
+                    )
+                    change.update({old_field_name: old_value})
+                    changes.append(change)
+            if changes:
+                item.change_ids = [(0, 0, vals) for vals in changes]

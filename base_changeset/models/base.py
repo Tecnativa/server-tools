@@ -76,7 +76,7 @@ class Base(models.AbstractModel):
         if self._changeset_disabled():
             return result
         for this, vals in zip(result, vals_list):
-            local_vals = self.env["record.changeset"].add_changeset(
+            local_vals, changeset, rules = self.env["record.changeset"].add_changeset(
                 this, vals, create=True
             )
             local_vals = {
@@ -87,15 +87,36 @@ class Base(models.AbstractModel):
                     __no_changeset=disable_changeset,
                     tracking_disable=True,
                 ).write(local_vals)
+            if changeset:
+                field_names_changes = changeset.mapped("change_ids.field_id.name")
+                pre_custom_values = {}
+                for field_name in rules:
+                    if field_name not in field_names_changes:
+                        pre_custom_values[field_name] = this[field_name]
+                changeset.add_post_changeset(pre_custom_values, rules, create=True)
         return result
 
     def write(self, values):
+        """A changeset will be created if necessary according to the rules.
+        A changeset will be created with the add_changeset() method if applicable.
+        In addition we need to call the add_post_changeset() method to add any
+        missing fields (related or compute fields that were not set in values)."""
         if self._changeset_disabled():
             return super().write(values)
 
         for record in self:
-            local_values = self.env["record.changeset"].add_changeset(record, values)
+            local_values, changeset, rules = self.env["record.changeset"].add_changeset(
+                record, values
+            )
+            if changeset:
+                field_names_changes = changeset.mapped("change_ids.field_id.name")
+                pre_custom_values = {}
+                for field_name in rules:
+                    if field_name not in field_names_changes:
+                        pre_custom_values[field_name] = record[field_name]
             super(Base, record).write(local_values)
+            if changeset:
+                changeset.add_post_changeset(pre_custom_values, rules)
         return True
 
     def _changeset_disabled(self):
