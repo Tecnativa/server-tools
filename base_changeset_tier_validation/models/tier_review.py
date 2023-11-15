@@ -21,37 +21,6 @@ class TierReview(models.Model):
         compute="_compute_changeset_ref_display_name",
     )
 
-    @api.depends("definition_id", "changeset_id")
-    def _compute_summary_field_id(self):
-        for item in self:
-            changes = item.changeset_id.change_ids
-            if changes and any(x.rule_id.summary_field_id for x in changes):
-                final_changes = changes.filtered(lambda x: x.rule_id.summary_field_id)
-                change = fields.first(final_changes)
-                item.summary_field_id = change.rule_id.summary_field_id
-            else:
-                item.summary_field_id = item.definition_id.summary_field_id
-
-    @api.depends("summary_field_id", "model", "res_id", "changeset_id")
-    def _compute_summary(self):
-        for item in self.filtered(lambda x: x.summary_field_id):
-            changes = item.changeset_id.change_ids.filtered(
-                lambda x: x.field_id == item.summary_field_id
-            )
-            if changes:
-                change = fields.first(changes)
-                value = "%s > %s" % (
-                    change.origin_value_display,
-                    change.new_value_display,
-                )
-            else:
-                field_name = item.summary_field_id.name
-                model = self.env[item.model]
-                model_field_def = model._fields[field_name]
-                record = model.browse(item.res_id)
-                value = model_field_def.convert_to_write(record[field_name], record)
-            item.summary = "%s: %s" % (item.summary_field_id.field_description, value)
-
     @api.depends("changeset_id", "changeset_id.model", "changeset_id.res_id")
     def _compute_changeset_ref(self):
         for item in self:
@@ -85,8 +54,14 @@ class TierReview(models.Model):
 
     def _tier_process(self, status):
         """Custom process to accept/reject, similar to _validate_tier()
-        and _rejected_tier()."""
+        and _rejected_tier().
+        If you have a changeset_id defined, we want to cancel only first pending
+        revision  and the linked changeset."""
         self.ensure_one()
+        if self.changeset_id and status == "approved":
+            self.changeset_id.apply()
+        elif self.changeset_id and status == "rejected":
+            self.changeset_id.cancel()
         self.write(
             {
                 "status": status,
