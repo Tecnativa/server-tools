@@ -1,5 +1,6 @@
 # Copyright 2015-2017 Camptocamp SA
 # Copyright 2020 Onestein (<https://www.onestein.eu>)
+# Copyright 2023 Tecnativa - Víctor Martínez
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 from itertools import groupby
@@ -62,6 +63,12 @@ class RecordChangesetChange(models.Model):
     field_name = fields.Char(related="field_id.name", readonly=True)
     field_type = fields.Selection(related="field_id.ttype", readonly=True)
     model = fields.Char(related="field_id.model", readonly=True, store=True)
+    res_id = fields.Integer(
+        string="Record ID",
+        index=True,
+        required=True,
+        readonly=True,
+    )
     origin_value_display = fields.Char(
         string="Previous", compute="_compute_value_display"
     )
@@ -118,7 +125,9 @@ class RecordChangesetChange(models.Model):
         default="draft",
         readonly=True,
     )
-    record_id = fields.Reference(related="changeset_id.record_id")
+    record_id = fields.Reference(
+        selection="_reference_models", compute="_compute_record_id"
+    )
     rule_id = fields.Many2one("changeset.field.rule", readonly=True)
     user_can_validate_changeset = fields.Boolean(
         compute="_compute_user_can_validate_changeset"
@@ -154,7 +163,12 @@ class RecordChangesetChange(models.Model):
     _new_value_fields = ["new_value_%s" % suffix for suffix in _suffix_to_types]
     _value_fields = _origin_value_fields + _old_value_fields + _new_value_fields
 
-    @api.depends("changeset_id.res_id", "changeset_id.model")
+    @api.depends("model", "res_id")
+    def _compute_record_id(self):
+        for item in self:
+            item.record_id = "%s,%s" % (item.model, item.res_id)
+
+    @api.depends("record_id")
     def _compute_origin_values(self):
         states = self.get_pending_changes_states()
         field_names = [
@@ -347,12 +361,14 @@ class RecordChangesetChange(models.Model):
 
         :returns: dict of values, boolean
         """
-        new_field_name = self.get_field_for_type(rule.field_id, "new")
+        field = rule._get_field_from_field_name(field_name)
+        new_field_name = self.get_field_for_type(field, "new")
         new_value = self._value_for_changeset(record, field_name, value=value)
         change = {
             new_field_name: new_value,
-            "field_id": rule.field_id.id,
+            "field_id": field.id,
             "rule_id": rule.id,
+            "res_id": record.id,
         }
         if rule.action == "auto":
             change["state"] = "done"
@@ -368,7 +384,7 @@ class RecordChangesetChange(models.Model):
             # Normally the 'old' value is set when we use the 'apply'
             # button, but since we short circuit the 'apply', we
             # directly set the 'old' value here
-            old_field_name = self.get_field_for_type(rule.field_id, "old")
+            old_field_name = self.get_field_for_type(field, "old")
             # get values ready to write as expected by the changeset
             # (for instance, a many2one is written in a reference
             # field)
@@ -389,8 +405,8 @@ class RecordChangesetChange(models.Model):
         ]
         states = self.get_pending_changes_states()
         domain = [
-            ("changeset_id.model", "=", model),
-            ("changeset_id.res_id", "=", res_id),
+            ("model", "=", model),
+            ("res_id", "=", res_id),
             ("state", "in", states),
         ]
         return self.search_read(domain, fields)

@@ -1,5 +1,6 @@
 # Copyright 2015-2017 Camptocamp SA
 # Copyright 2020 Onestein (<https://www.onestein.eu>)
+# Copyright 2023 Tecnativa - Víctor Martínez
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 from odoo import api, fields, models, tools
@@ -14,6 +15,13 @@ class ChangesetFieldRule(models.Model):
     model_id = fields.Many2one(related="field_id.model_id", store=True)
     field_id = fields.Many2one(
         comodel_name="ir.model.fields", ondelete="cascade", required=True
+    )
+    field_ttype = fields.Selection(related="field_id.ttype")
+    field_relation = fields.Char(related="field_id.relation")
+    subfield_id = fields.Many2one(
+        comodel_name="ir.model.fields",
+        domain="[('model_id.model', '=', field_relation)]",
+        ondelete="cascade",
     )
     action = fields.Selection(
         selection="_selection_action",
@@ -164,6 +172,16 @@ class ChangesetFieldRule(models.Model):
         return not self.expression or tools.safe_eval.safe_eval(
             self.expression, {"object": record, "user": self.env.user}
         )
+
+    def _get_field_from_field_name(self, field_name):
+        if self.field_ttype == "one2many":
+            if self.subfield_id:
+                return self.subfield_id
+            else:
+                return self.field_relation.fild_id.filtered(
+                    lambda x: x.name == field_name
+                )
+        return self.field_id
 
     @api.model
     def create(self, vals):

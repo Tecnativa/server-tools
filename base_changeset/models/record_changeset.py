@@ -1,5 +1,6 @@
 # Copyright 2015-2017 Camptocamp SA
 # Copyright 2020 Onestein (<https://www.onestein.eu>)
+# Copyright 2023 Tecnativa - Víctor Martínez
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 from odoo import api, fields, models
@@ -144,29 +145,53 @@ class RecordChangeset(models.Model):
                     record, field, values[field]
                 ):
                     continue
-            change, pop_value = change_model._prepare_changeset_change(
-                record,
-                rule,
-                field,
-                values[field],
-                create=create,
+            new_changes, new_pop_values = self._add_changes_from_rule(
+                rule, record, values[field], create
             )
-            if pop_value:
-                write_values.pop(field)
-                if create:
-                    # overwrite with null value for new records
-                    write_values[field] = (
-                        # but create some default for required text fields
-                        record._fields[field].required
-                        and record._fields[field].type in ("char", "text")
-                        and "/"
-                        or record._fields[field].null(record)
-                    )
-            changes.append(change)
+            changes += new_changes
+            if rule.field_ttype != "one2many":
+                for new_pop_value in new_pop_values:
+                    write_values.pop(new_pop_value)
         if changes:
             changeset_vals = self._prepare_changeset_vals(changes, record, source)
             self.env["record.changeset"].create(changeset_vals)
         return write_values
+
+    def _add_changes_from_rule(self, rule, record, value, create):
+        change_model = self.env["record.changeset.change"]
+        pop_values = []
+        changes = []
+        if rule.field_ttype == "one2many":
+            child_model = self.env[rule.field_relation]
+            for [command, child_res_id, child_vals] in value:
+                if child_vals and child_res_id and command in (0, 1):
+                    child_record = child_model.browse(child_res_id)
+                    child_create = True if command == 1 else False
+                    subfield = rule.subfield_id.name or False
+                    for child_field in list(child_vals.keys()):
+                        if not subfield or child_field == subfield:
+                            change, pop_value = change_model._prepare_changeset_change(
+                                child_record,
+                                rule,
+                                child_field,
+                                child_vals[child_field],
+                                create=child_create,
+                            )
+                            if pop_value:
+                                pop_values.append(child_field)
+                            changes.append(change)
+        else:
+            change, pop_value = change_model._prepare_changeset_change(
+                record,
+                rule,
+                rule.field_id.name,
+                value,
+                create=create,
+            )
+            if pop_value:
+                pop_values.append(rule.field_id.name)
+            changes.append(change)
+        return changes, pop_values
 
     @api.model
     def _prepare_changeset_vals(self, changes, record, source):
