@@ -3,6 +3,7 @@
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 from odoo import fields
+from odoo.tools import mute_logger
 from odoo.tests.common import TransactionCase
 
 from ..models.base import disable_changeset
@@ -12,6 +13,7 @@ from .common import ChangesetTestCommon
 class TestChangesetFieldType(ChangesetTestCommon, TransactionCase):
     """Check that changeset changes are stored expectingly to their types"""
 
+    @mute_logger("odoo.models.unlink")
     def _setup_rules(self):
         ChangesetFieldRule = self.env["changeset.field.rule"]
         ChangesetFieldRule.search([]).unlink()
