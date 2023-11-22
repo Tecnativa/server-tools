@@ -29,6 +29,11 @@ class ChangesetFieldRule(models.Model):
         domain="[('model', '=', tier_model)]",
         string="Tier definition",
     )
+    summary_field_id = fields.Many2one(
+        comodel_name="ir.model.fields",
+        domain="[('model_id', '=', model_id),('store', '=', True)]",
+        help="If defined, the value of that field will be used in the summary of the review.",
+    )
 
     @api.depends("field_id")
     def _compute_field_model_id(self):

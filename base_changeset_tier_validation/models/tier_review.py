@@ -6,8 +6,82 @@ from odoo import api, fields, models
 class TierReview(models.Model):
     _inherit = "tier.review"
 
-    summary = fields.Char(string="Summary")
+    summary_field_id = fields.Many2one(
+        comodel_name="ir.model.fields", compute="_compute_summary_field_id", store=True
+    )
+    summary = fields.Char(string="Summary", compute="_compute_summary", store=True)
     changeset_id = fields.Many2one(comodel_name="record.changeset")
+    changeset_ref = fields.Reference(
+        selection=lambda self: [
+            (model.model, model.name) for model in self.env["ir.model"].search([])
+        ],
+        compute="_compute_changeset_ref",
+    )
+    changeset_ref_display_name = fields.Char(
+        compute="_compute_changeset_ref_display_name",
+    )
+
+    @api.depends("definition_id", "changeset_id")
+    def _compute_summary_field_id(self):
+        for item in self:
+            changes = item.changeset_id.change_ids
+            if changes and any(x.rule_id.summary_field_id for x in changes):
+                final_changes = changes.filtered(lambda x: x.rule_id.summary_field_id)
+                change = fields.first(final_changes)
+                item.summary_field_id = change.rule_id.summary_field_id
+            else:
+                item.summary_field_id = item.definition_id.summary_field_id
+
+    @api.depends("summary_field_id", "model", "res_id", "changeset_id")
+    def _compute_summary(self):
+        for item in self.filtered(lambda x: x.summary_field_id):
+            changes = item.changeset_id.change_ids.filtered(
+                lambda x: x.field_id == item.summary_field_id
+            )
+            if changes:
+                change = fields.first(changes)
+                value = "%s > %s" % (
+                    change.origin_value_display,
+                    change.new_value_display,
+                )
+            else:
+                field_name = item.summary_field_id.name
+                model = self.env[item.model]
+                model_field_def = model._fields[field_name]
+                record = model.browse(item.res_id)
+                value = model_field_def.convert_to_write(record[field_name], record)
+            item.summary = "%s: %s" % (item.summary_field_id.field_description, value)
+
+    @api.depends("changeset_id", "changeset_id.model", "changeset_id.res_id")
+    def _compute_changeset_ref(self):
+        for item in self:
+            if item.changeset_id and item.model != item.changeset_id.model:
+                item.changeset_ref = "%s,%s" % (
+                    item.changeset_id.model,
+                    item.changeset_id.res_id,
+                )
+
+            else:
+                item.changeset_ref = item.changeset_ref
+
+    @api.depends("changeset_id", "changeset_id.model", "changeset_id.res_id")
+    def _compute_changeset_ref_display_name(self):
+        for item in self:
+            if item.changeset_id and item.model != item.changeset_id.model:
+                record = self.env[item.changeset_id.model].browse(
+                    item.changeset_id.res_id
+                )
+                item.changeset_ref_display_name = record.display_name
+            else:
+                item.changeset_ref_display_name = item.changeset_ref_display_name
+
+    def validate_tier(self):
+        self.ensure_one()
+        self._tier_process("approved")
+
+    def reject_tier(self):
+        self.ensure_one()
+        self._tier_process("rejected")
 
     def _tier_process(self, status):
         """Custom process to accept/reject, similar to _validate_tier()
@@ -25,58 +99,3 @@ class TierReview(models.Model):
             rec._notify_accepted_reviews()
         else:
             rec._notify_rejected_review()
-
-    @api.model_create_multi
-    def create(self, vals_list):
-        """Set summary in reviews."""
-        result = super().create(vals_list)
-        for item in result:
-            item.summary = item._get_summary()
-        return result
-
-    def _get_field_value_display_from_record(self, field, field_value, record):
-        if not field_value:
-            return ""
-        if field.ttype == "monetary":
-            pre = post = ""
-            currency = record.currency_id
-            if currency.position == "before":
-                pre = "{symbol}\N{NO-BREAK SPACE}".format(symbol=currency.symbol or "")
-            else:
-                post = "\N{NO-BREAK SPACE}{symbol}".format(symbol=currency.symbol or "")
-            value = " {pre}{0}{post}".format(field_value, pre=pre, post=post)
-        elif field.ttype == "many2one":
-            value = field_value.display_name
-        elif field.ttype == "selection":
-            selection_labels = dict(
-                record.fields_get(field.name, "selection")[field.name]["selection"]
-            )
-            value = selection_labels[field_value]
-        else:
-            value = field_value
-        return value
-
-    def _get_summary(self):
-        """Set summary in reviews: field name: value or old_value > new_value.
-        Example: Vendor: Azure Interior."""
-        if self.definition_id.summary_field_id:
-            field = self.definition_id.summary_field_id
-            record = self.env[self.model].browse(self.res_id)
-            change = self.changeset_id.change_ids.filtered(
-                lambda x: x.field_id == field
-            )
-            if change:
-                old_value = self._get_field_value_display_from_record(
-                    field, change.origin_value_display, record
-                )
-                new_value = self._get_field_value_display_from_record(
-                    field, change.new_value_display, record
-                )
-                value = "%s > %s" % (old_value, new_value)
-            else:
-                field_value = record[field.name]
-                value = self._get_field_value_display_from_record(
-                    field, field_value, record
-                )
-            return "%s: %s" % (field.field_description, value)
-        return False
