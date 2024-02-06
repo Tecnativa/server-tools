@@ -285,6 +285,31 @@ class RecordChangeset(models.Model):
                         child_record = child_model
                         if child_res_id and isinstance(child_res_id, int):
                             child_record = child_model.browse(child_res_id)
+                            # Set the values that child_vals should have
+                            if command in (0, 1):
+                                child_model_fields = self.env[
+                                    child_record._name
+                                ]._fields
+                                for subfield in rule._get_all_subfields():
+                                    subfield_name = subfield.name
+                                    child_model_field = child_model_fields[
+                                        subfield_name
+                                    ]
+                                    if (
+                                        subfield_name not in child_vals
+                                        and change_model._type_to_suffix.get(
+                                            subfield.ttype
+                                        )
+                                        and (
+                                            child_model_field.related
+                                            or child_model_field.compute
+                                        )
+                                    ):
+                                        child_vals[
+                                            subfield_name
+                                        ] = self._get_new_value_from_record(
+                                            child_record, subfield_name, child_vals
+                                        )
                         # Prepare changes only to update (command=1)
                         child_changes = False
                         if command == 1:
