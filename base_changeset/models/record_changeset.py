@@ -1,11 +1,12 @@
 # Copyright 2015-2017 Camptocamp SA
 # Copyright 2020 Onestein (<https://www.onestein.eu>)
-# Copyright 2023 Tecnativa - Víctor Martínez
+# Copyright 2023-2024 Tecnativa - Víctor Martínez
 # License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
 
 import ast
 
-from odoo import api, fields, models
+from odoo import _, api, fields, models
+from odoo.exceptions import UserError
 
 from .base import disable_changeset
 
@@ -202,7 +203,6 @@ class RecordChangeset(models.Model):
             else:
                 item.state = "done"
 
-    # flake8: noqa: C901 (is too complex)
     @api.model
     def add_changeset(self, record, values, create=False):
         """Add a changeset on a record
@@ -278,70 +278,7 @@ class RecordChangeset(models.Model):
                     continue
             if rule.field_id.ttype == "one2many":
                 write_values.pop(field)
-                # Changes related to the one2many (create changeset and changes)
-                child_model = self.env[rule.field_relation]
-                for [command, child_res_id, child_vals] in values[field]:
-                    if command in (0, 1, 2):
-                        child_record = child_model
-                        if child_res_id and isinstance(child_res_id, int):
-                            child_record = child_model.browse(child_res_id)
-                            # Set the values that child_vals should have
-                            if command in (0, 1):
-                                child_model_fields = self.env[
-                                    child_record._name
-                                ]._fields
-                                for subfield in rule._get_all_subfields():
-                                    subfield_name = subfield.name
-                                    child_model_field = child_model_fields[
-                                        subfield_name
-                                    ]
-                                    if (
-                                        subfield_name not in child_vals
-                                        and change_model._type_to_suffix.get(
-                                            subfield.ttype
-                                        )
-                                        and (
-                                            child_model_field.related
-                                            or child_model_field.compute
-                                        )
-                                    ):
-                                        child_vals[
-                                            subfield_name
-                                        ] = self._get_new_value_from_record(
-                                            child_record, subfield_name, child_vals
-                                        )
-                        # Prepare changes only to update (command=1)
-                        child_changes = False
-                        if command == 1:
-                            child_changes = self._prepare_changes_vals_from_values(
-                                child_record, child_vals, rule
-                            )
-                        # create changeset from child record
-                        if child_changes or command in (0, 2):
-                            child_changeset_vals = self._prepare_changeset_vals(
-                                child_changes, child_record, source
-                            )
-                            if command == 0:
-                                changeset_action = "create"
-                                child_res_id = 0
-                            elif command == 1:
-                                changeset_action = "write"
-                            elif command == 2:
-                                changeset_action = "unlink"
-                            child_changeset_vals.update(
-                                {
-                                    "parent_id": record.id,
-                                    "parent_model": record._name,
-                                    "action": changeset_action,
-                                    "raw_changes": {
-                                        field: [[command, child_res_id, child_vals]]
-                                    },
-                                }
-                            )
-                            if self._allow_create_changeset(child_changeset_vals):
-                                changeset_model.with_context(
-                                    changeset_rule=rule
-                                ).create(child_changeset_vals)
+                self._create_child_changesets(source, rule, record, values)
             else:
                 change, pop_value = change_model._prepare_changeset_change(
                     record,
@@ -369,6 +306,87 @@ class RecordChangeset(models.Model):
             changeset_vals = self._prepare_changeset_vals(changes, record, source)
             changeset_model.create(changeset_vals)
         return write_values
+
+    def _prepare_child_changeset_vals(
+        self, source, rule, child_record, child_vals, command, child_res_id
+    ):
+        # Prepare changes only to update (command=1)
+        vals = False
+        child_changes = False
+        if command == 1:
+            child_changes = self._prepare_changes_vals_from_values(
+                child_record, child_vals, rule
+            )
+        # create changeset from child record
+        if child_changes or command in (0, 2):
+            vals = self._prepare_changeset_vals(child_changes, child_record, source)
+            if command == 0:
+                changeset_action = "create"
+                child_res_id = 0
+            elif command == 1:
+                changeset_action = "write"
+            elif command == 2:
+                changeset_action = "unlink"
+            vals.update(
+                {
+                    "action": changeset_action,
+                    "raw_changes": {
+                        rule.field_id.name: [[command, child_res_id, child_vals]]
+                    },
+                }
+            )
+        return vals
+
+    def _create_child_changeset(self, source, rule, record, value):
+        changeset_model = self.env["record.changeset"]
+        change_model = self.env["record.changeset.change"]
+        [command, child_res_id, child_vals] = value
+        child_record = child_model = self.env[rule.field_relation]
+        if child_res_id and isinstance(child_res_id, int):
+            child_record = child_model.browse(child_res_id)
+            # Set the values that child_vals should have
+            if command in (0, 1):
+                child_model_fields = self.env[child_record._name]._fields
+                for subfield in rule._get_all_subfields():
+                    subfield_name = subfield.name
+                    child_model_field = child_model_fields[subfield_name]
+                    if (
+                        subfield_name in child_vals
+                        or not change_model._type_to_suffix.get(subfield.ttype)
+                        or (not child_model_field.related and child_model_field.compute)
+                    ):
+                        continue
+                    child_vals[subfield_name] = self._get_new_value_from_record(
+                        child_record, subfield_name, child_vals
+                    )
+        # Prepare changes only to update (command=1)
+        child_changeset_vals = self._prepare_child_changeset_vals(
+            source, rule, child_record, child_vals, command, child_res_id
+        )
+        if child_changeset_vals:
+            child_changeset_vals.update(
+                {
+                    "parent_id": record.id,
+                    "parent_model": record._name,
+                }
+            )
+            if self._allow_create_changeset(child_changeset_vals):
+                return changeset_model.with_context(changeset_rule=rule).create(
+                    child_changeset_vals
+                )
+        return changeset_model
+
+    def _create_child_changesets(self, source, rule, record, values):
+        # Changes related to the one2many (create changeset and changes)
+        changesets = self.env["record.changeset"]
+        field = rule.field_id.name
+        for [command, child_res_id, child_vals] in values[field]:
+            if command not in (0, 1, 2):
+                continue
+            changesets += self._create_child_changeset(
+                source, rule, record, [command, child_res_id, child_vals]
+            )
+        return changesets
 
     def _allow_create_changeset(self, vals):
         """Check if it is necessary to create the changeset or not.
