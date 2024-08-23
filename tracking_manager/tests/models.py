@@ -5,9 +5,18 @@
 from odoo import fields, models
 
 
-class ResPartnerBank(models.Model):
-    _inherit = "res.partner.bank"
+class ResPartnerBankCustom(models.Model):
+    _name = "res.partner.bank.custom"
 
-    category_ids = fields.Many2many(
-        comodel_name="res.partner.category", string="Categories"
+    acc_number = fields.Char(required=True)
+    category_ids = fields.Many2many(comodel_name="res.partner.category")
+    bank_id = fields.Many2one("res.bank")
+    partner_id = fields.Many2one(
+        "res.partner", ondelete="cascade", index=True, required=True
     )
+
+
+class ResPartner(models.Model):
+    _inherit = "res.partner"
+
+    custom_bank_ids = fields.One2many("res.partner.bank.custom", "partner_id")
