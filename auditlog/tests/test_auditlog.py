@@ -3,6 +3,7 @@
 # © 2021 Stefan Rijnhart <stefan@opener.amsterdam>
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 from odoo.modules.migration import load_script
+from odoo.tests import new_test_user
 from odoo.tests.common import Form, SavepointCase, TransactionCase
 
 from odoo.addons.base.models.ir_model import MODULE_UNINSTALL_FLAG
@@ -439,39 +440,23 @@ class TestAuditlogFullCaptureRecord(TransactionCase, AuditlogCommon):
 class AuditLogRuleTestForUserFields(SavepointCase):
     @classmethod
     def setUpClass(cls):
-        super(AuditLogRuleTestForUserFields, cls).setUpClass()
+        super().setUpClass()
         # get Contact model id
-        cls.contact_model_id = (
-            cls.env["ir.model"].search([("model", "=", "res.partner")]).id
-        )
+        cls.contact_model_id = cls.env.ref("base.model_res_partner").id
 
         # get phone field id
-        cls.fields_to_exclude_ids = (
-            cls.env["ir.model.fields"]
-            .search([("model", "=", "res.partner"), ("name", "=", "phone")])
-            .id
-        )
+        cls.fields_to_exclude_ids = cls.env.ref("base.field_res_partner__phone").id
 
         # get user id
-        cls.user = (
-            cls.env["res.users"]
-            .with_context(no_reset_password=True, tracking_disable=True)
-            .create(
-                {
-                    "name": "Test User",
-                    "login": "testuser",
-                }
-            )
+        cls.user = new_test_user(
+            cls.env,
+            login="testuser",
+            groups="base.group_user,base.group_partner_manager",
         )
-        cls.user_2 = (
-            cls.env["res.users"]
-            .with_context(no_reset_password=True, tracking_disable=True)
-            .create(
-                {
-                    "name": "Test User2",
-                    "login": "testuser2",
-                }
-            )
+        cls.user_2 = new_test_user(
+            cls.env,
+            login="testuser2",
+            groups="base.group_user,base.group_partner_manager",
         )
 
         cls.users_to_exclude_ids = cls.user.id
@@ -529,6 +514,11 @@ class AuditLogRuleTestForUserFields(SavepointCase):
             )
         )
 
+    @classmethod
+    def tearDownClass(cls):
+        cls.auditlog_rule.unlink()
+        return super().tearDownClass()
+
     def test_01_AuditlogFull_field_exclude_create_log(self):
         # Checking log is created for testpartner1
         create_log_record = self.auditlog_log.search(
@@ -543,9 +533,6 @@ class AuditLogRuleTestForUserFields(SavepointCase):
 
         # Checking log lines not created for phone
         self.assertTrue("phone" not in field_names)
-
-        # Removing created log record
-        create_log_record.unlink()
 
     def test_02_AuditlogFull_field_exclude_write_log(self):
         # Checking fields_to_exclude_ids
@@ -628,6 +615,3 @@ class AuditLogRuleTestForUserFields(SavepointCase):
 
         # Checking log lines are created
         self.assertTrue(delete_log_record)
-
-        # Removing auditlog_rule
-        self.auditlog_rule.unlink()
