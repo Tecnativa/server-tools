@@ -18,6 +18,7 @@
     "data": [
         "views/ir_model_fields.xml",
         "views/ir_model.xml",
+        "views/mail_tracking_value_views.xml",
         "views/message_template.xml",
     ],
 }
