@@ -16,7 +16,7 @@ class TestOnchangeHelper(TransactionCase):
                 "zip": "89312",
             }
         )
-        input_vals = dict(parent_id=main_partner.id, type="contact")
+        input_vals = {"parent_id": main_partner.id, "type": "contact"}
         updated_vals = self.env["res.partner"].play_onchanges(input_vals, ["parent_id"])
         self.assertIn("country_id", updated_vals)
         self.assertIn("state_id", updated_vals)
@@ -39,7 +39,8 @@ class TestOnchangeHelper(TransactionCase):
         self.assertIn("country_id", updated_vals)
 
     def test_playing_onchange_on_model(self):
+        state = self.env.ref("base.state_es_m")
         result = self.env["res.partner"].play_onchanges(
-            {"company_type": "company"}, ["company_type"]
+            {"state_id": state.id}, ["state_id"]
         )
-        self.assertEqual(result["is_company"], True)
+        self.assertEqual(result["country_id"], state.country_id.id)
